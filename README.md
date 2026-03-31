@@ -350,8 +350,9 @@ Accessible at `http://<device-ip>:9999/` with these sections:
 
 ### receive_audio.py - Receive Forward Audio (TX→network)
 
-Joins the UDP multicast group, strips DEADBEEF headers and metadata, outputs clean
-raw S16_LE stereo 48kHz PCM to stdout. Drops incomplete frames and fills gaps with silence.
+Uses raw sockets to capture UDP multicast, strips DEADBEEF headers and metadata, outputs
+clean raw S16_LE stereo 48kHz PCM to stdout. Drops incomplete frames and fills gaps with
+silence. Requires root (raw sockets). Works reliably on Linux bridges.
 
 ```
 Options:
@@ -420,6 +421,12 @@ direct cable (same broken autoneg = compatible).
 Even with correct speed/duplex settings, managed switches can introduce audio stuttering.
 A Linux bridge (two ports, both forced 100FDX) works reliably. The cause is likely
 multicast handling or store-and-forward latency in the switch.
+
+### Linux Bridge Multicast Socket Issue
+Standard UDP multicast sockets (`IP_ADD_MEMBERSHIP`) may not receive packets on Linux bridges,
+even with `multicast_snooping=0`. Packets are visible in tcpdump (raw sockets) but not delivered
+to regular sockets. The `receive_audio.py` script uses raw sockets (`AF_PACKET`) to work around
+this reliably. Requires root.
 
 ### TX: 50% Duty Cycle in Default Mode (SOLVED)
 The default `ONE_TO_MULTI` mode causes 50% duty cycle (22 frames/s with ~125ms gaps).

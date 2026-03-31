@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
 """
-Receive audio from HDMI-over-IP audio extender (M-A202 / model LKDCAA).
+Receive forward audio from M-A202 TX device (UDP multicast).
 
-Protocol: Proprietary UDP multicast with DEADBEEF magic header.
-Format: 16-bit signed PCM, little-endian, stereo interleaved, 48000 Hz.
+Uses raw sockets to reliably capture multicast on Linux bridges.
+Format: 48kHz, 16-bit signed LE, stereo interleaved.
+Real audio is 4096 bytes per frame (device header claims 4116 - ignore it).
 
-The device sends audio in bursts with periodic gaps (~125ms).
-This receiver inserts silence to fill gaps, producing a continuous stream.
+IMPORTANT: Set TX to MULTI_TO_MULTI mode for full-rate continuous audio.
 
-Outputs raw PCM to stdout. Pipe to aplay, sox play, ffmpeg, etc.
+Outputs raw PCM to stdout. Pipe to play, aplay, ffmpeg, etc.
 
-Usage examples:
-  # Direct playback (sox - recommended):
+Usage:
   python3 receive_audio.py | play -t raw -r 48000 -e signed -b 16 -c 2 -
 
-  # Direct playback (aplay):
-  python3 receive_audio.py | aplay -f S16_LE -c 2 -r 48000 --buffer-time=500000
+  # Via SSH:
+  ssh root@bridge-host "python3 receive_audio.py" 2>/dev/null | play -t raw -r 48000 -e signed -b 16 -c 2 -
 
   # Record to WAV:
   python3 receive_audio.py | sox -t raw -r 48000 -e signed -b 16 -c 2 - output.wav
 
-  # Record to FLAC:
-  python3 receive_audio.py | ffmpeg -f s16le -ar 48000 -ac 2 -i - output.flac
-
-  # Stream info only:
+  # Stream info:
   python3 receive_audio.py --info
 """
 
@@ -36,122 +32,116 @@ import argparse
 import signal
 
 MAGIC = 0xDEADBEEF
-HEADER_SIZE = 16
-STREAM_HEADER_SIZE = 20
+AUDIO_LEN = 4096  # real audio per frame (NOT 4116 as device claims)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Receive audio from HDMI-over-IP extender')
-    parser.add_argument('--mcast', default='224.0.0.100', help='Multicast group (default: 224.0.0.100)')
+    parser = argparse.ArgumentParser(description='Receive forward audio from M-A202 TX')
+    parser.add_argument('--iface', default='br0', help='Interface to capture on (default: br0)')
     parser.add_argument('--port', type=int, default=7001, help='UDP port (default: 7001)')
-    parser.add_argument('--bind', default='0.0.0.0', help='Local IP to bind for multicast (default: 0.0.0.0)')
-    parser.add_argument('--info', action='store_true', help='Print stream info to stderr and exit')
+    parser.add_argument('--info', action='store_true', help='Print stream info and exit')
     parser.add_argument('--no-fill', action='store_true', help='Do not fill gaps with silence')
     args = parser.parse_args()
 
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
-    sock.bind(('', args.port))
+    try:
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0800))
+        sock.bind((args.iface, 0))
+    except PermissionError:
+        print("Need root. Run with sudo.", file=sys.stderr)
+        sys.exit(1)
 
-    mreq = struct.pack('4s4s', socket.inet_aton(args.mcast), socket.inet_aton(args.bind))
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
 
     if args.info:
-        sock.settimeout(5)
-        try:
-            data, addr = sock.recvfrom(2048)
-        except socket.timeout:
-            print("No packets received", file=sys.stderr)
-            sys.exit(1)
-        magic, seq, plen, npkt = struct.unpack('<IIII', data[:16])
-        while seq != 0:
-            data, addr = sock.recvfrom(2048)
-            magic, seq, plen, npkt = struct.unpack('<IIII', data[:16])
-        name = data[16:24].split(b'\x00')[0].decode('ascii', errors='replace')
-        audio_len = struct.unpack('<I', data[24:28])[0]
-        sample_rate = struct.unpack('<I', data[32:36])[0]
-        print(f"Source:      {addr[0]}:{addr[1]}", file=sys.stderr)
-        print(f"Multicast:   {args.mcast}:{args.port}", file=sys.stderr)
-        print(f"Stream name: {name}", file=sys.stderr)
-        print(f"Sample rate: {sample_rate} Hz", file=sys.stderr)
-        print(f"Format:      16-bit signed LE, stereo interleaved", file=sys.stderr)
-        print(f"Audio bytes/frame: {audio_len}", file=sys.stderr)
-        print(f"Packets/frame: {npkt}", file=sys.stderr)
-        samples_per_frame = audio_len // 4
-        frame_duration_ms = samples_per_frame / sample_rate * 1000
-        print(f"Samples/frame: {samples_per_frame} stereo pairs ({frame_duration_ms:.1f} ms)", file=sys.stderr)
-        bitrate_kbps = sample_rate * 2 * 16 / 1000
-        print(f"Bitrate:     {bitrate_kbps:.0f} kbps (uncompressed)", file=sys.stderr)
-        sock.close()
-        return
+        print("Waiting for first packet...", file=sys.stderr)
+        while True:
+            data = sock.recv(65535)
+            if len(data) < 56 or data[23] != 17:
+                continue
+            ip_hdr_len = (data[14] & 0x0F) * 4
+            udp_off = 14 + ip_hdr_len
+            dst_port = struct.unpack(">H", data[udp_off+2:udp_off+4])[0]
+            if dst_port != args.port:
+                continue
+            payload = data[udp_off+8:]
+            if len(payload) < 36:
+                continue
+            magic, seq = struct.unpack('<II', payload[:8])
+            if magic != MAGIC or seq != 0:
+                continue
+            src_ip = ".".join(str(b) for b in data[26:30])
+            name = payload[16:24].split(b'\x00')[0].decode('ascii', errors='replace')
+            claimed_len = struct.unpack('<I', payload[24:28])[0]
+            sr = struct.unpack('<I', payload[32:36])[0]
+            print("Source:      %s" % src_ip, file=sys.stderr)
+            print("Interface:   %s" % args.iface, file=sys.stderr)
+            print("Stream name: %s" % name, file=sys.stderr)
+            print("Sample rate: %d Hz" % sr, file=sys.stderr)
+            print("Format:      16-bit signed LE, stereo interleaved", file=sys.stderr)
+            print("Claimed audio/frame: %d (WRONG)" % claimed_len, file=sys.stderr)
+            print("Real audio/frame: %d bytes = %d stereo pairs" % (AUDIO_LEN, AUDIO_LEN // 4), file=sys.stderr)
+            print("Packets/frame: 3", file=sys.stderr)
+            sock.close()
+            return
 
     out_fd = sys.stdout.fileno()
     stderr = sys.stderr
-    print("Receiving audio... (Ctrl+C to stop)", file=stderr)
-
-    audio_len = 4116  # bytes per frame (updated from stream)
-    frame_duration = audio_len / 4 / 48000  # seconds per frame (~0.0214s)
     fill_gaps = not args.no_fill
-    silence_frame = b'\x00' * audio_len
+    silence = b'\x00' * AUDIO_LEN
+    frame_duration = AUDIO_LEN / 4 / 48000
+
+    print("Receiving audio on %s... (Ctrl+C to stop)" % args.iface, file=stderr)
 
     frame_buf = bytearray()
-    frame_pkt_count = 0  # track how many packets in current frame
-    last_frame_time = None
+    pkt_count = 0
+    last_time = None
     frame_count = 0
     drop_count = 0
     gap_count = 0
 
     try:
         while True:
-            data, addr = sock.recvfrom(2048)
-            if len(data) < HEADER_SIZE:
+            data = sock.recv(65535)
+            if len(data) < 56 or data[23] != 17:
                 continue
-
-            magic, seq = struct.unpack('<II', data[:8])
+            ip_hdr_len = (data[14] & 0x0F) * 4
+            udp_off = 14 + ip_hdr_len
+            dst_port = struct.unpack(">H", data[udp_off+2:udp_off+4])[0]
+            if dst_port != args.port:
+                continue
+            payload = data[udp_off+8:]
+            if len(payload) < 16:
+                continue
+            magic, seq = struct.unpack("<II", payload[:8])
             if magic != MAGIC:
                 continue
 
             if seq == 0:
                 now = time.monotonic()
-
-                # Flush previous frame ONLY if complete (3 packets)
-                if frame_buf and frame_pkt_count == 3 and len(frame_buf) >= audio_len:
-                    out = bytes(frame_buf[:audio_len])
-
-                    # Fill gaps with silence (fast - no per-sample math)
-                    if fill_gaps and last_frame_time is not None:
-                        gap = now - last_frame_time
+                if frame_buf and pkt_count == 3 and len(frame_buf) >= AUDIO_LEN:
+                    if fill_gaps and last_time is not None:
+                        gap = now - last_time
                         missed = int(gap / frame_duration) - 1
                         if 0 < missed < 50:
-                            os.write(out_fd, silence_frame * missed)
+                            os.write(out_fd, silence * missed)
                             gap_count += missed
-
-                    os.write(out_fd, out)
+                    os.write(out_fd, bytes(frame_buf[:AUDIO_LEN]))
                     frame_count += 1
-                    last_frame_time = now
+                    last_time = now
                 elif frame_buf:
                     drop_count += 1
 
-                # Start new frame
                 frame_buf = bytearray()
-                frame_pkt_count = 1
-                if len(data) >= HEADER_SIZE + STREAM_HEADER_SIZE:
-                    # Header says 4116 but real audio is 4096 bytes (1024 stereo pairs)
-                    # Bytes 4096-4116 contain metadata/padding that causes clicks
-                    audio_len = 4096
-                    sr = struct.unpack('<I', data[32:36])[0]
-                    frame_duration = audio_len / 4 / sr
-                    silence_frame = b'\x00' * audio_len
-                frame_buf.extend(data[HEADER_SIZE + STREAM_HEADER_SIZE:])
+                pkt_count = 1
+                frame_buf.extend(payload[36:])
             else:
-                frame_buf.extend(data[HEADER_SIZE:])
-                frame_pkt_count += 1
+                frame_buf.extend(payload[16:])
+                pkt_count += 1
 
     except KeyboardInterrupt:
-        print(f"\nStopped. ({frame_count} frames, {drop_count} dropped, {gap_count} gaps filled)", file=stderr)
+        print("\nStopped. (%d frames, %d dropped, %d gaps)" % (frame_count, drop_count, gap_count), file=stderr)
     except BrokenPipeError:
         pass
     finally:
