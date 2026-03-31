@@ -209,13 +209,76 @@ interpreted as audio.
 occasional clicks even on a clean direct-cable connection. Our software receiver correctly
 truncates to 4096 bytes, producing cleaner output than the hardware.
 
+### Boot & Pairing Sequence (Reverse Engineered)
+
+The TX device has a **built-in DHCP server** that automatically assigns an IP to the RX:
+
+```
+t=0s    TX boots:
+        - Gets static IP 192.168.1.100
+        - Starts DHCP server on port 67
+        - IGMP join 224.0.0.101 (return multicast?)
+        - Starts multicast audio on 224.0.0.100:7001
+
+t=27s   RX boots:
+        - Sends DHCP Discover (broadcast)
+        - TX replies with DHCP Offer → RX gets 192.168.1.101
+
+t=28s   RX configures:
+        - Gratuitous ARP for 192.168.1.101
+        - IGMP join 224.0.0.100 (forward audio)
+        - ARP for TX (192.168.1.100)
+
+t=28s   RX pairs with TX:
+        - TCP SYN → TX:7005 → SYN-ACK → connected
+        - Immediately starts streaming return audio over TCP
+        - No further handshake needed
+
+Total pairing time: ~1 second after RX boots
+```
+
+**To impersonate the RX from Linux:** Get IP 192.168.1.101 (from TX's DHCP or set static),
+then TCP connect to 192.168.1.100:7005 and read/write raw PCM.
+
+### Network Integration
+
+The TX runs its own DHCP server, which conflicts with existing networks. To integrate
+the devices into your own network:
+
+**Option A: Isolated bridge (recommended)**
+Put both devices on an isolated Linux bridge with the TX's DHCP server serving the RX.
+Use a separate interface for your LAN uplink. The bridge host sees all traffic.
+
+```
+[LAN] ── [USB/3rd NIC] ── [Linux Host] ── [br0: eth0 + eth1] ── [TX + RX]
+                               ↑
+                    Runs receive scripts,
+                    streams to Chromecast, etc.
+```
+
+**Option B: Docker container with dedicated NICs**
+Pass two physical NICs to a Docker container on a Proxmox server.
+Container runs the bridge, receive scripts, and audio streaming.
+The TX's DHCP stays isolated inside the container's bridge.
+
+**Option C: Block TX DHCP, use your own**
+Use iptables on the bridge to block the TX's DHCP replies and run your own
+DHCP server. Assign both devices IPs on your network. Requires the RX to
+still connect to the TX's IP on port 7005.
+
+```bash
+# Block TX's DHCP server from reaching LAN
+ebtables -A FORWARD -p IPv4 --ip-src 192.168.1.100 --ip-proto udp --ip-dport 68 -j DROP
+```
+
 ### Protocol Ports
 
 | Port | Protocol | Direction | Purpose |
 |------|----------|-----------|---------|
-| 7001 | UDP multicast | TX->network | Audio stream (224.0.0.100) |
-| 7002 | UDP unicast | TX->RX | Audio stream (when paired) |
-| 7005 | TCP | TX<->RX | Control/pairing channel |
+| 67/68 | UDP DHCP | TX->RX | TX's built-in DHCP assigns RX IP |
+| 7001 | UDP multicast | TX->network | Forward audio (224.0.0.100) |
+| 7002 | UDP unicast | TX->RX | Forward audio (when paired) |
+| 7005 | TCP | RX->TX | Return audio + control channel |
 | 9999 | TCP/HTTP | any->device | Web configuration UI |
 | 62510 | UDP source | TX outbound | Source port for all audio |
 
