@@ -346,12 +346,16 @@ Chinese HDMI-over-IP platform found in many budget extenders under different bra
 
 ## Enhancement Ideas
 
-- **Chromecast Audio multi-room** - Pipe `receive_return_audio.py` into snapcast or
-  pulseaudio-dlna to stream simultaneously to all Chromecast Audio devices on the network.
-  Lowest overhead options: snapcast (purpose-built for sync'd multi-room) or pychromecast.
+- **Docker on Proxmox** - Run the Linux bridge + receiver in a Docker container on a
+  Proxmox server. Pass two physical NICs (forced 100FDX) to the container. Eliminates
+  the need for a dedicated Orange Pi. Container runs bridge + scripts + Chromecast streaming.
+- **Chromecast Audio multi-room** - Pipe `receive_return_audio.py` through ffmpeg to
+  create an HTTP MP3 stream, then use pychromecast to cast to all Chromecast Audio devices.
+  Alternative: create a speaker group in Google Home app and cast to the group.
+- **MULTI_TO_MULTI mode** - Untested with both devices set to this mode simultaneously.
+  May change protocol behavior (possibly TCP-only, eliminating multicast clicking).
 - **ALSA virtual sound card** - `snd-aloop` + scripts = transparent virtual device
 - **PulseAudio/PipeWire module** - Network audio source/sink
-- **Multi-room audio** - Any LAN device can receive the multicast
 - **Audio processing** - Insert sox/ffmpeg effects in the pipeline
 - **RTP bridge** - Convert to standard RTP for pro audio tools
 - **Wireshark dissector** - Custom dissector for the 0xDEADBEEF protocol

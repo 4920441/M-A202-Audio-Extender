@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Receive return-direction audio from M-A202 RX device via TCP sniffing.
+Receive return-direction audio from M-A202 RX device.
 
 The RX device sends raw PCM audio to the TX on TCP port 7005.
 Format: 48kHz, 16-bit signed LE, stereo interleaved. No headers.
 
-This script sniffs the TCP stream from the bridge interface.
-Must run on the bridge host (Orange Pi) with both devices connected.
+This script sniffs the TCP stream using a raw socket on the bridge interface.
+Must run as root on the bridge host (Orange Pi) with both devices connected.
 
 Outputs raw PCM to stdout.
 
@@ -19,22 +19,24 @@ Usage examples:
 
   # Record to FLAC:
   python3 receive_return_audio.py | ffmpeg -f s16le -ar 48000 -ac 2 -i - output.flac
+
+  # Remote playback via SSH:
+  ssh root@bridge-host "python3 receive_return_audio.py" | play -t raw -r 48000 -e signed -b 16 -c 2 -
 """
 
-import subprocess
+import socket
 import struct
 import sys
 import os
-import signal
 import argparse
+import signal
 
 
 def main():
     parser = argparse.ArgumentParser(description='Receive return audio from M-A202 RX device')
     parser.add_argument('--iface', default='br0', help='Network interface to sniff (default: br0)')
-    parser.add_argument('--rx-ip', default='192.168.1.108', help='RX device IP (default: 192.168.1.108)')
-    parser.add_argument('--tx-ip', default='192.168.1.100', help='TX device IP (default: 192.168.1.100)')
-    parser.add_argument('--port', type=int, default=7005, help='TCP control port (default: 7005)')
+    parser.add_argument('--rx-ip', default='192.168.1.101', help='RX device IP (default: 192.168.1.101)')
+    parser.add_argument('--port', type=int, default=7005, help='TCP port (default: 7005)')
     args = parser.parse_args()
 
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
@@ -42,60 +44,62 @@ def main():
     stderr = sys.stderr
     out_fd = sys.stdout.fileno()
 
-    # Use tcpdump to capture the raw TCP stream
-    # Filter: RX->TX on port 7005 (audio direction)
-    bpf = "src host %s and dst host %s and tcp port %d" % (args.rx_ip, args.tx_ip, args.port)
+    rx_ip_bytes = socket.inet_aton(args.rx_ip)
 
-    print("Sniffing return audio on %s (%s -> %s:%d)..." % (args.iface, args.rx_ip, args.tx_ip, args.port), file=stderr)
-    print("Format: 48kHz stereo 16-bit LE (raw PCM over TCP, no headers)", file=stderr)
-    print("Ctrl+C to stop", file=stderr)
+    # Raw socket to sniff all IP packets on the bridge
+    try:
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0800))
+        sock.bind((args.iface, 0))
+    except PermissionError:
+        print("Need root to sniff packets. Run with sudo.", file=stderr)
+        sys.exit(1)
 
-    proc = subprocess.Popen(
-        ["tcpdump", "-nn", "-i", args.iface, "-w", "-", "-U", bpf],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL
-    )
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
+
+    print("Receiving return audio from RX %s via %s... (Ctrl+C to stop)" % (args.rx_ip, args.iface), file=stderr)
+
+    byte_count = 0
 
     try:
-        # Read pcap global header
-        pcap_hdr = proc.stdout.read(24)
-        if len(pcap_hdr) < 24:
-            print("Failed to start capture", file=stderr)
-            return
-
-        frame_count = 0
-        byte_count = 0
-
         while True:
-            # Read pcap packet header
-            phdr = proc.stdout.read(16)
-            if len(phdr) < 16:
-                break
-            ts_sec, ts_usec, incl_len, orig_len = struct.unpack("<IIII", phdr)
-            data = proc.stdout.read(incl_len)
-            if len(data) < incl_len:
-                break
-
-            # Parse ethernet + IP + TCP to extract payload
+            data = sock.recv(65535)
             if len(data) < 54:
                 continue
+
+            # Ethernet header (14 bytes) + IP header
+            ethertype = struct.unpack(">H", data[12:14])[0]
+            if ethertype != 0x0800:
+                continue
+
+            # IP header
+            ip_proto = data[23]
+            if ip_proto != 6:  # TCP
+                continue
+
+            ip_src = data[26:30]
+            if ip_src != rx_ip_bytes:
+                continue
+
+            # TCP header
             ip_hdr_len = (data[14] & 0x0F) * 4
             tcp_off = 14 + ip_hdr_len
+            dst_port = struct.unpack(">H", data[tcp_off + 2:tcp_off + 4])[0]
+            if dst_port != args.port:
+                continue
+
             tcp_hdr_len = ((data[tcp_off + 12] >> 4) & 0xF) * 4
             payload = data[tcp_off + tcp_hdr_len:]
 
-            if len(payload) > 0:
+            if len(payload) > 6:  # Skip TCP ACKs and TX's 6-byte keepalives
                 os.write(out_fd, payload)
-                frame_count += 1
                 byte_count += len(payload)
 
     except KeyboardInterrupt:
-        print("\nStopped. (%d segments, %d bytes)" % (frame_count, byte_count), file=stderr)
+        print("\nStopped. (%d bytes)" % byte_count, file=stderr)
     except BrokenPipeError:
         pass
     finally:
-        proc.terminate()
-        proc.wait()
+        sock.close()
 
 
 if __name__ == '__main__':
