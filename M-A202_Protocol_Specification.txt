@@ -1,0 +1,208 @@
+================================================================================
+  M-A202 Audio Extender - Protocol Specification
+  Reverse-engineered from network traffic capture, 2026-03-31
+================================================================================
+
+1. OVERVIEW
+
+   The M-A202 (internal model: LKDCAA) uses a proprietary UDP multicast
+   protocol to stream uncompressed PCM audio between TX and RX units.
+
+   The protocol uses a 0xDEADBEEF magic number and groups audio samples
+   into frames of 3 UDP packets each.
+
+2. CONSTANTS
+
+   MAGIC           = 0xDEADBEEF (little-endian: EF BE AD DE)
+   PAYLOAD_SIZE    = 1400 bytes (per UDP packet)
+   PACKETS_PER_FRAME = 3
+   AUDIO_PER_FRAME = 4116 bytes
+   SAMPLE_RATE     = 48000 Hz
+   BIT_DEPTH       = 16 (signed, little-endian)
+   CHANNELS        = 2 (stereo, interleaved)
+   STREAM_NAME     = "hdmi_rx\0" (8 bytes, null-padded)
+
+   DEFAULT_MCAST   = 224.0.0.100
+   DEFAULT_PORT    = 7001
+   DEFAULT_SRC_PORT = 62510
+
+3. PROTOCOL HEADER (16 bytes)
+
+   Present at the start of every UDP payload.
+
+   struct protocol_header {
+       uint32_le magic;          // Always 0xDEADBEEF
+       uint32_le sequence;       // 0, 1, or 2 within a frame
+       uint32_le payload_size;   // Always 1400 (0x00000578)
+       uint32_le packets_per_frame; // Always 3
+   };
+
+4. STREAM HEADER (20 bytes)
+
+   Present only in packets where sequence == 0.
+   Immediately follows the protocol header.
+
+   struct stream_header {
+       char      name[8];        // "hdmi_rx\0" null-terminated, zero-padded
+       uint32_le audio_length;   // Bytes of audio in this frame: 4116
+       uint32_le reserved;       // Always 0
+       uint32_le sample_rate;    // 48000 (0x0000BB80)
+   };
+
+5. FRAME STRUCTURE
+
+   One audio frame consists of 3 UDP packets sent in rapid succession:
+
+   Packet 0 (seq=0):
+     [protocol_header: 16B] [stream_header: 20B] [audio: 1364B]
+     Total: 1400 bytes
+
+   Packet 1 (seq=1):
+     [protocol_header: 16B] [audio: 1384B]
+     Total: 1400 bytes
+
+   Packet 2 (seq=2):
+     [protocol_header: 16B] [audio: 1384B]
+     Total: 1400 bytes
+
+   Raw data capacity: 1364 + 1384 + 1384 = 4132 bytes
+   Header claims:     4116 bytes (INCORRECT - includes metadata)
+   Actual audio:      4096 bytes = 1024 stereo pairs (power of 2)
+   Metadata/padding:  bytes 4096-4131
+
+   IMPORTANT: The audio_len field in the stream header says 4116, but
+   real audio is only 4096 bytes. Bytes 4096-4116 contain metadata
+   (including value 0x05A2 at offset 4112) that causes audible clicks
+   if played as audio. Always truncate to 4096 bytes per frame.
+
+   Frame data layout:
+     Bytes 0-4095:     Audio PCM (1024 stereo sample pairs)
+     Bytes 4096-4111:  Zero padding
+     Bytes 4112-4113:  Metadata (0x05A2 = 1442 in some frames)
+     Bytes 4114-4123:  Zero padding
+     Bytes 4124-4131:  Sync markers (e.g. 0x8257 = -32169)
+
+6. AUDIO DATA FORMAT
+
+   Samples are 16-bit signed integers in little-endian byte order.
+   Channels are interleaved: L0, R0, L1, R1, L2, R2, ...
+
+   One stereo sample pair = 4 bytes (2 bytes left + 2 bytes right)
+   Samples per frame = 4096 / 4 = 1024 stereo pairs
+   Frame duration = 1024 / 48000 = 0.021333 seconds (~21.3 ms)
+
+   Byte layout of audio data:
+     Offset 0:  Left[0]  low byte
+     Offset 1:  Left[0]  high byte
+     Offset 2:  Right[0] low byte
+     Offset 3:  Right[0] high byte
+     Offset 4:  Left[1]  low byte
+     Offset 5:  Left[1]  high byte
+     ...
+
+   Sample value range: -32768 to +32767
+
+7. TIMING
+
+   Frames are sent approximately every 21.4 ms (~46.7 frames/second).
+   The 3 packets within a frame are sent as a burst with <0.1ms spacing.
+
+   Inter-frame gap: ~21 ms (measured 19-21ms with occasional jitter)
+   The stream is continuous - frames are sent even during silence.
+
+8. TRANSPORT
+
+   IP:        UDP over IPv4
+   Multicast: 224.0.0.100 (default, configurable via web UI)
+   Dst Port:  7001 (= web UI base port + 2)
+   Src Port:  62510 (fixed)
+   TTL:       255
+
+   IP header: standard, no options
+   Don't Fragment: not set
+   TTL: 255 (0xFF)
+
+9. RECEIVER ALGORITHM (pseudocode)
+
+   socket = udp_multicast_join("224.0.0.100", 7001)
+   frame_buf = empty
+   audio_len = 4116
+
+   loop:
+     data = socket.recv()
+     magic, seq, plen, npkt = unpack_le_u32x4(data[0:16])
+
+     if magic != 0xDEADBEEF: continue
+
+     if seq == 0:
+       output(frame_buf[0:audio_len])   // flush previous frame
+       frame_buf = empty
+       audio_len = unpack_le_u32(data[24:28])
+       frame_buf.append(data[36:])      // skip 16+20 byte headers
+     else:
+       frame_buf.append(data[16:])      // skip 16 byte header
+
+10. SENDER ALGORITHM (pseudocode)
+
+    socket = udp_socket(src_port=62510)
+    set_multicast_ttl(socket, 255)
+    dest = ("224.0.0.100", 7001)
+
+    loop:
+      audio = read_pcm(4116 bytes)   // S16LE stereo 48kHz
+      if eof: break
+
+      // Packet 0: header + stream info + audio[0:1364]
+      pkt0 = pack(DEADBEEF, seq=0, 1400, 3)
+           + "hdmi_rx\0"
+           + pack(4116, 0, 48000)
+           + audio[0:1364]
+      send(pkt0, dest)
+
+      // Packet 1: header + audio[1364:2748]
+      pkt1 = pack(DEADBEEF, seq=1, 1400, 3) + audio[1364:2748]
+      send(pkt1, dest)
+
+      // Packet 2: header + audio[2748:4116] + 16 zero bytes
+      pkt2 = pack(DEADBEEF, seq=2, 1400, 3) + audio[2748:4116] + zeros(16)
+      send(pkt2, dest)
+
+      sleep_until(next_frame_time)    // pace to ~21.4ms intervals
+
+11. WIRE FORMAT EXAMPLE (first packet hex dump)
+
+    UDP payload (1400 bytes):
+
+    0000: ef be ad de  00 00 00 00  78 05 00 00  03 00 00 00  magic seq=0 len=1400 npkt=3
+    0010: 68 64 6d 69  5f 72 78 00  14 10 00 00  00 00 00 00  "hdmi_rx\0" alen=4116 res=0
+    0020: 80 bb 00 00  xx xx xx xx  xx xx xx xx  xx xx xx xx  sr=48000 [audio data...]
+    ...
+    0574: xx xx xx xx                                          [end of audio]
+
+    Second packet (seq=1):
+    0000: ef be ad de  01 00 00 00  78 05 00 00  03 00 00 00  magic seq=1 len=1400 npkt=3
+    0010: xx xx xx xx  xx xx xx xx  xx xx xx xx  xx xx xx xx  [audio data...]
+    ...
+
+    Third packet (seq=2):
+    0000: ef be ad de  02 00 00 00  78 05 00 00  03 00 00 00  magic seq=2 len=1400 npkt=3
+    0010: xx xx xx xx  xx xx xx xx  xx xx xx xx  xx xx xx xx  [audio data...]
+    ...
+    0560: xx xx xx xx  00 00 00 00  00 00 00 00  00 00 00 00  [audio] [zero padding]
+    0570: 00 00 00 00  00 00 00 00                             [zero padding]
+
+12. NOTES
+
+    - The web UI shows "244" for the multicast first octet but actual traffic
+      uses 224. This is a display bug in the firmware.
+    - The web UI port field shows the "base port" (default 6999). Audio is
+      sent on base_port + 2 = 7001. Video (if HDMI connected) likely uses
+      the base port directly.
+    - The device has broken Ethernet auto-negotiation. Must force:
+      ethtool -s <iface> speed 100 duplex full autoneg off
+    - Stream is continuous even with no audio input (sends noise floor).
+    - The protocol has no authentication, encryption, or error correction.
+    - Packet loss will cause brief audio glitches but no desynchronization
+      since each frame is independently decodable.
+
+================================================================================
