@@ -110,6 +110,21 @@ parec --format=s16le --channels=2 --rate=48000 | python3 send_audio.py
 - 1x Reset button (partial reset only)
 - 1x Power input (5V DC)
 
+### TX vs RX Device Differences
+
+Despite identical hardware and web UI, the devices behave differently:
+
+| | TX-labeled | RX-labeled |
+|--|-----------|-----------|
+| UDP multicast (224.0.0.100:7001) | Yes | Yes |
+| TCP audio to `<subnet>.93:7005` | **No** | **Yes** |
+| Built-in DHCP server | Yes | No |
+| Works standalone for Linux audio | Multicast only (50% duty cycle without RX) | **Multicast + TCP (full rate, clean)** |
+
+**For Linux audio input: use only the RX-labeled device.** It sends clean full-rate
+48kHz stereo PCM over TCP to `<subnet>.93:7005`, works completely standalone,
+no second device needed. Just assign `.93` on your subnet to your server.
+
 ## The Surprise: It's an HDMI Extender Inside
 
 Despite being sold as an audio device, the firmware reveals this is an **HDMI-over-IP extender** chipset repurposed for audio-only use:
