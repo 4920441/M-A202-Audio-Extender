@@ -12,11 +12,15 @@ This repository documents the **reverse-engineered protocol** and provides **Pyt
 ### Key Findings
 
 - Audio is **48 kHz / 16-bit stereo uncompressed PCM** (better than CD quality)
-- Streamed via **UDP multicast** with a simple proprietary `0xDEADBEEF` header protocol
+- **Two different protocols per direction:**
+  - **Forward (TX→RX):** UDP multicast with proprietary `0xDEADBEEF` header, 3 packets per frame
+  - **Return (RX→TX):** Raw PCM over TCP port 7005 - **no headers at all**, full rate, perfect quality
+- The return TCP path is the **cleaner protocol** - no metadata bugs, no packet loss (TCP retransmit), continuous 192 KB/s
 - Internally this is an **HDMI-over-IP extender** chipset (model LKDCAA, FW V5.8) repurposed for audio
-- **Full-rate 141 pkt/s = 47 frames/s continuous** when TX+RX are properly paired
+- **Full-rate 141 pkt/s = 47 frames/s continuous** when TX+RX are properly paired via Linux bridge
 - The device header claims 4116 audio bytes/frame but **real audio is 4096 bytes** (1024 stereo pairs) - the remaining 20 bytes are metadata that causes clicks if played as audio
 - Our software receiver produces **cleaner audio than the hardware RX unit** (which has the same metadata-as-audio bug in its firmware)
+- **Pro tip:** For best quality, use the RX unit as your audio input (sends clean TCP) and the TX unit as output (receives TCP on port 7005). `send_audio_tcp.py` can replace the RX hardware entirely
 
 ## Quick Start
 
