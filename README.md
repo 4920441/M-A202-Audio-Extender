@@ -346,6 +346,9 @@ Chinese HDMI-over-IP platform found in many budget extenders under different bra
 
 ## Enhancement Ideas
 
+- **Chromecast Audio multi-room** - Pipe `receive_return_audio.py` into snapcast or
+  pulseaudio-dlna to stream simultaneously to all Chromecast Audio devices on the network.
+  Lowest overhead options: snapcast (purpose-built for sync'd multi-room) or pychromecast.
 - **ALSA virtual sound card** - `snd-aloop` + scripts = transparent virtual device
 - **PulseAudio/PipeWire module** - Network audio source/sink
 - **Multi-room audio** - Any LAN device can receive the multicast
