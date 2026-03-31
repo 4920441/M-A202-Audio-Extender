@@ -240,6 +240,27 @@ Total pairing time: ~1 second after RX boots
 **To impersonate the RX from Linux:** Get IP 192.168.1.101 (from TX's DHCP or set static),
 then TCP connect to 192.168.1.100:7005 and read/write raw PCM.
 
+### Critical Discovery: The .93 Target IP
+
+The RX device always connects to **`<subnet>.93`** on TCP port 7005 to stream its return audio.
+This is derived from the **TX MAC address byte 4**: `00:0c:1d:**93**:95:4d` → last octet = **93**.
+
+Tested on multiple subnets:
+- On 192.168.1.0/24: RX connects to **192.168.1.93**:7005
+- On 172.16.1.0/24: RX connects to **172.16.1.93**:7005
+
+This is hardcoded in firmware and survives all resets. The .93 is NOT the gateway,
+NOT from DHCP, and NOT configurable via the web UI.
+
+**To receive return audio on any network:** Simply assign `.93` on the device subnet
+to your server and run `receive_tcp_server.py`. No bridge, no Orange Pi, no sniffing needed.
+
+```bash
+# On your server (e.g. Proxmox host):
+ip addr add 172.16.1.93/24 dev eth0
+python3 receive_tcp_server.py --bind 172.16.1.93 | play -t raw -r 48000 -e signed -b 16 -c 2 -
+```
+
 ### Network Integration
 
 The TX runs its own DHCP server, which conflicts with existing networks. To integrate
@@ -261,14 +282,20 @@ Pass two physical NICs to a Docker container on a Proxmox server.
 Container runs the bridge, receive scripts, and audio streaming.
 The TX's DHCP stays isolated inside the container's bridge.
 
-**Option C: Block TX DHCP, use your own**
-Use iptables on the bridge to block the TX's DHCP replies and run your own
-DHCP server. Assign both devices IPs on your network. Requires the RX to
-still connect to the TX's IP on port 7005.
+**Option C: Direct on your LAN (simplest for audio receive)**
+Set both devices to static IPs on your subnet. The RX will always connect to
+`<subnet>.93:7005` (derived from TX MAC). Just assign `.93` to your server.
+No bridge needed - only requirement is forced 100FDX on the port facing each device.
 
 ```bash
-# Block TX's DHCP server from reaching LAN
-ebtables -A FORWARD -p IPv4 --ip-src 192.168.1.100 --ip-proto udp --ip-dport 68 -j DROP
+# On your server:
+ip addr add 10.0.0.93/24 dev eth0   # match your subnet
+python3 receive_tcp_server.py --bind 10.0.0.93 | play -t raw -r 48000 -e signed -b 16 -c 2 -
+```
+
+**Note:** Block the TX's built-in DHCP server to avoid conflicts:
+```bash
+ebtables -A FORWARD -p IPv4 --ip-src <TX_IP> --ip-proto udp --ip-dport 68 -j DROP
 ```
 
 ### Protocol Ports
