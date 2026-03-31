@@ -17,10 +17,11 @@ This repository documents the **reverse-engineered protocol** and provides **Pyt
   - **Return (RX→TX):** Raw PCM over TCP port 7005 - **no headers at all**, full rate, perfect quality
 - The return TCP path is the **cleaner protocol** - no metadata bugs, no packet loss (TCP retransmit), continuous 192 KB/s
 - Internally this is an **HDMI-over-IP extender** chipset (model LKDCAA, FW V5.8) repurposed for audio
-- **Full-rate 141 pkt/s = 47 frames/s continuous** when TX+RX are properly paired via Linux bridge
+- **Full-rate 141 pkt/s = 47 frames/s continuous** when set to `MULTI_TO_MULTI` mode (default `ONE_TO_MULTI` only gives 50%)
 - The device header claims 4116 audio bytes/frame but **real audio is 4096 bytes** (1024 stereo pairs) - the remaining 20 bytes are metadata that causes clicks if played as audio
 - Our software receiver produces **cleaner audio than the hardware RX unit** (which has the same metadata-as-audio bug in its firmware)
-- **Pro tip:** For best quality, use the RX unit as your audio input (sends clean TCP) and the TX unit as output (receives TCP on port 7005). `send_audio_tcp.py` can replace the RX hardware entirely
+- **RX device works standalone** - sends clean TCP audio to `<subnet>.93:7005`, no TX needed
+- The `.93` target IP is derived from TX MAC byte 4 (`00:0c:1d:**93**:95:4d`) and works on any subnet
 
 ## Quick Start
 
@@ -420,10 +421,18 @@ Even with correct speed/duplex settings, managed switches can introduce audio st
 A Linux bridge (two ports, both forced 100FDX) works reliably. The cause is likely
 multicast handling or store-and-forward latency in the switch.
 
-### TX Without RX: 50% Duty Cycle
-When the TX operates alone (no RX paired on same subnet), it sends only ~22 frames/s
-(50% of full rate). Both devices must be on the same IP subnet with matching multicast
-settings for the TCP control channel (port 7005) to establish and enable full-rate streaming.
+### TX: 50% Duty Cycle in Default Mode (SOLVED)
+The default `ONE_TO_MULTI` mode causes 50% duty cycle (22 frames/s with ~125ms gaps).
+**Fix: Set `MULTI_TO_MULTI` via web UI → full continuous 48kHz (47 frames/s), no RX needed.**
+
+```
+Web UI (http://<TX_IP>:9999/) → Transmit Mode → MULTI_TO_MULTI → Commit → Reboot
+```
+
+| Mode | Packet Rate | Result |
+|------|-------------|--------|
+| ONE_TO_MULTI (default) | 66 pkt/s (50%) | Gaps, stuttering, unusable |
+| **MULTI_TO_MULTI** | **141 pkt/s (100%)** | **Full continuous 48kHz** |
 
 ### Hardware RX Clicking
 The RX unit's firmware plays metadata bytes (4096-4116) as audio, causing occasional clicks
@@ -434,7 +443,7 @@ correctly strips the metadata and produces cleaner audio.
 
 1. **HDMI Video over IP** - The chipset supports 720P/1080P video streaming (base port)
 2. **EDID Upload** - Custom EDID for the HDMI RX input
-3. **MULTI_TO_MULTI Mode** - Multiple TX devices on the same multicast group
+3. **MULTI_TO_MULTI Mode** - Enables full-rate streaming. Also allows multiple TX devices on the same multicast group
 4. **Configurable Multicast** - Multiple independent audio channels on one network
 5. **Factory Reset** - Key: `888888`
 
@@ -457,8 +466,7 @@ Chinese HDMI-over-IP platform found in many budget extenders under different bra
 - **Chromecast Audio multi-room** - Pipe `receive_return_audio.py` through ffmpeg to
   create an HTTP MP3 stream, then use pychromecast to cast to all Chromecast Audio devices.
   Alternative: create a speaker group in Google Home app and cast to the group.
-- **MULTI_TO_MULTI mode** - Untested with both devices set to this mode simultaneously.
-  May change protocol behavior (possibly TCP-only, eliminating multicast clicking).
+- **MULTI_TO_MULTI mode is the fix for 50% duty cycle** - Enables full-rate continuous 48kHz on the TX even without the RX device. Set via web UI.
 - **ALSA virtual sound card** - `snd-aloop` + scripts = transparent virtual device
 - **PulseAudio/PipeWire module** - Network audio source/sink
 - **Audio processing** - Insert sox/ffmpeg effects in the pipeline
