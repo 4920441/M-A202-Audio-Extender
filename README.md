@@ -15,7 +15,7 @@ This repository documents the **reverse-engineered protocol** and provides **Pyt
 
 ### Key Findings
 
-- Audio is **48 kHz / 16-bit stereo uncompressed PCM** (better than CD quality)
+- Audio is **48 kHz / 16-bit stereo uncompressed PCM** (could be better than CD quality, if done right)
 - **Two different protocols per direction:**
   - **Forward (TX→RX):** UDP multicast with proprietary `0xDEADBEEF` header, 3 packets per frame
   - **Return (RX→TX):** Raw PCM over TCP port 7005 - **no headers at all**, full rate, perfect quality
@@ -23,7 +23,7 @@ This repository documents the **reverse-engineered protocol** and provides **Pyt
 - Internally this is an **HDMI-over-IP extender** chipset (model LKDCAA, FW V5.8) repurposed for audio
 - **Full-rate 141 pkt/s = 47 frames/s continuous** when set to `MULTI_TO_MULTI` mode (default `ONE_TO_MULTI` only gives 50%)
 - The device header claims 4116 audio bytes/frame but **real audio is 4096 bytes** (1024 stereo pairs) - the remaining 20 bytes are metadata that causes clicks if played as audio
-- Our software receiver produces **cleaner audio than the hardware RX unit** (which has the same metadata-as-audio bug in its firmware)
+- Our software receiver produces **cleaner audio than the hardware RX unit** (confirmed over overnight test - hardware RX has firmware bug playing metadata bytes 4096-4116 as audio, causing clicks even on direct cable)
 - **RX device works standalone** - sends clean TCP audio to `<subnet>.93:7005`, no TX needed
 - The `.93` target IP is derived from TX MAC byte 4 (`00:0c:1d:**93**:95:4d`) and works on any subnet
 
@@ -445,10 +445,14 @@ Web UI (http://<TX_IP>:9999/) → Transmit Mode → MULTI_TO_MULTI → Commit �
 | ONE_TO_MULTI (default) | 66 pkt/s (50%) | Gaps, stuttering, unusable |
 | **MULTI_TO_MULTI** | **141 pkt/s (100%)** | **Full continuous 48kHz** |
 
-### Hardware RX Clicking
+### Hardware RX Clicking (Software Receiver is Better)
 The RX unit's firmware plays metadata bytes (4096-4116) as audio, causing occasional clicks
 even on a clean direct-cable connection. This is a firmware bug. Our software receiver
 correctly strips the metadata and produces cleaner audio.
+
+**Confirmed via overnight streaming test:** `receive_audio.py` ran continuously for 12+ hours
+with clean audio - no clicks, no dropouts. The $100 hardware RX is literally worse than
+a Python script.
 
 ## Hidden Features
 
