@@ -571,29 +571,42 @@ python3 receive_audio.py 2>/dev/null | \
   -c:a flac -f ogg -content_type application/ogg \
   icecast://source:hackme@localhost:8000/tx-flac &
 
-# RX MP3 → Icecast /rx
+# RX MP3 + FLAC → Icecast /rx and /rx-flac (single receiver, tee split)
+mkfifo /tmp/rx_audio_fifo
+
 python3 receive_tcp_server.py --bind <subnet>.93 2>/dev/null | \
+  tee /tmp/rx_audio_fifo | \
   ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 \
   -c:a libmp3lame -b:a 320k -f mp3 -content_type audio/mpeg \
-  icecast://source:hackme@localhost:8000/rx &
+  icecast://source:hackme@localhost:8000/rx -loglevel warning &
+
+ffmpeg -f s16le -ar 48000 -ac 2 -i /tmp/rx_audio_fifo \
+  -c:a flac -f ogg -content_type application/ogg \
+  icecast://source:hackme@localhost:8000/rx-flac -loglevel warning &
 ```
 
 ### Listen
 
 ```
 http://<server>:8000/tx        ← TX audio, MP3 (browser/Chromecast)
-http://<server>:8000/tx-flac   ← TX audio, lossless FLAC (low latency, pro use)
+http://<server>:8000/tx-flac   ← TX audio, lossless FLAC (low latency)
 http://<server>:8000/rx        ← RX audio, MP3 (browser/Chromecast)
+http://<server>:8000/rx-flac   ← RX audio, lossless FLAC (low latency)
 http://<server>:8000/          ← Icecast status page
 ```
 
 Works in any browser, VLC, ffplay, mpv, or Chromecast. Multiple simultaneous listeners supported.
 
 > [!NOTE]
-> **RX FLAC (/rx-flac) is not stable** - the RX uses a single TCP connection held by the MP3
-> encoder. A second receiver (raw socket sniffer) for FLAC causes glitches due to TCP segment
-> reassembly issues. Fix: use `tee` to split the single TCP stream into both encoders.
-> This is planned for the Proxmox production setup.
+> The RX device only makes one TCP connection, so both RX streams must share one receiver.
+> This is done via `tee` + a named pipe (FIFO). Running two separate receivers causes glitches
+> due to TCP segment reassembly issues.
+
+> [!WARNING]
+> **/rx-flac is unstable on low-power ARM devices** (Orange Pi, Raspberry Pi).
+> The TCP receive + tee + FLAC encoding + Icecast creates too much backpressure after ~3 minutes.
+> The TX FLAC stream (/tx-flac) works because raw socket multicast is more efficient.
+> RX FLAC will work on Proxmox/x86 where CPU is not a constraint.
 
 > [!NOTE]
 > Don't use ffmpeg's built-in `-listen 1` HTTP server - it only supports one client
