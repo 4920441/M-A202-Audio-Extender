@@ -524,6 +524,52 @@ Chinese HDMI-over-IP platform found in many budget extenders under different bra
 - **RTP bridge** - Convert to standard RTP for pro audio tools
 - **Wireshark dissector** - Custom dissector for the 0xDEADBEEF protocol
 
+## Icecast2 HTTP Streaming (Tested)
+
+Both devices can stream simultaneously via Icecast2 as proper HTTP audio streams,
+accessible from any browser or media player on the network.
+
+### Setup
+
+```bash
+# Install
+apt install icecast2 ffmpeg
+
+# Configure /etc/icecast2/icecast.xml (source-password: hackme)
+# Start Icecast (not as root)
+sudo -u nobody icecast2 -c /etc/icecast2/icecast.xml -b
+
+# Block DHCP between devices on the bridge
+ebtables -A FORWARD -p IPv4 --ip-proto udp --ip-dport 67 -j DROP
+ebtables -A FORWARD -p IPv4 --ip-proto udp --ip-dport 68 -j DROP
+
+# Feed TX device → Icecast /tx mount
+python3 receive_audio.py 2>/dev/null | \
+  ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 \
+  -c:a libmp3lame -b:a 320k -f mp3 -content_type audio/mpeg \
+  icecast://source:hackme@localhost:8000/tx -loglevel warning &
+
+# Feed RX device → Icecast /rx mount
+python3 receive_tcp_server.py --bind <subnet>.93 2>/dev/null | \
+  ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 \
+  -c:a libmp3lame -b:a 320k -f mp3 -content_type audio/mpeg \
+  icecast://source:hackme@localhost:8000/rx -loglevel warning &
+```
+
+### Listen
+
+```
+http://<server>:8000/tx   ← TX device audio (MP3 stream)
+http://<server>:8000/rx   ← RX device audio (MP3 stream)
+http://<server>:8000/     ← Icecast status page
+```
+
+Works in any browser, VLC, ffplay, mpv, or Chromecast. Multiple simultaneous listeners supported.
+
+> [!NOTE]
+> Don't use ffmpeg's built-in `-listen 1` HTTP server - it only supports one client
+> and dies after disconnect. Icecast2 is purpose-built for audio streaming.
+
 ## Network Debugging
 
 ```bash
