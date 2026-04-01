@@ -105,14 +105,14 @@ parec --format=s16le --channels=2 --rate=48000 | python3 send_audio.py
 | TX Default IP | 192.168.1.100 (static) |
 | RX Default IP | DHCP (set to 192.168.1.108 for pairing) |
 | Web Interface | http://\<device-ip\>:9999/ |
-| Web Page Title | "HDMI Externder Config Page" (sic) $\color{red}{\textsf{(typo in firmware)}}$ |
+| Web Page Title | "HDMI Externder Config Page" (sic) :red_circle: **(typo in firmware)** |
 
 ### Physical Connections (per unit)
 
-- 1x RJ45 Ethernet (100Mbps only) - $\color{red}{\textsf{auto-negotiation BROKEN}}$
+- 1x RJ45 Ethernet (100Mbps only) - :red_circle: **auto-negotiation BROKEN**
 - 2x RCA (Cinch) Audio Input (Left + Right)
 - 2x RCA (Cinch) Audio Output (Left + Right)
-- 1x Reset button - $\color{red}{\textsf{does NOT fully factory reset}}$
+- 1x Reset button - :red_circle: **does NOT fully factory reset**
 - 1x Power input (5V DC)
 
 ### TX vs RX Device Differences
@@ -173,7 +173,7 @@ overhead, no metadata bugs, and TCP handles retransmission automatically.
 | Sample Rate | 48000 Hz |
 | Bitrate | 1,536 kbps (uncompressed) |
 | **Real Audio/Frame** | **4096 bytes = 1024 stereo pairs = ~21.3ms** |
-| Header Audio Claim | 4116 bytes $\color{red}{\textsf{(WRONG - includes 20 bytes metadata that causes clicks)}}$ |
+| Header Audio Claim | 4116 bytes :red_circle: **(WRONG - includes 20 bytes metadata that causes clicks)** |
 | Packets/Frame | 3 (burst of 1400-byte UDP packets) |
 | Frame Rate | ~47 frames/s (when properly paired) |
 
@@ -218,7 +218,7 @@ Stream info (seq=0 only):
   0x20  uint32_le  Sample rate: 48000
 ```
 
-### $\color{red}{\textsf{Critical Bug: audio\_len Field}}$
+### :red_circle: **Critical Bug: audio_len Field**
 
 The device reports `audio_len=4116` in the stream header, but **real audio is only 4096 bytes**
 (exactly 1024 stereo sample pairs - a clean power-of-2 buffer). Bytes 4096-4116 contain
@@ -322,7 +322,7 @@ ebtables -A FORWARD -p IPv4 --ip-src <TX_IP> --ip-proto udp --ip-dport 68 -j DRO
 
 | Port | Protocol | Direction | Purpose |
 |------|----------|-----------|---------|
-| 67/68 | UDP DHCP | TX->RX | TX's built-in DHCP assigns RX IP $\color{red}{\textsf{(conflicts with network DHCP!)}}$ |
+| 67/68 | UDP DHCP | TX->RX | TX's built-in DHCP assigns RX IP :red_circle: **(conflicts with network DHCP!)** |
 | 7001 | UDP multicast | TX->network | Forward audio (224.0.0.100) |
 | 7002 | UDP unicast | TX->RX | Forward audio (when paired) |
 | 7005 | TCP | RX->TX | Return audio + control channel |
@@ -344,7 +344,7 @@ Accessible at `http://<device-ip>:9999/` with these sections:
 | Transmit Mode | ONE_TO_MULTI or MULTI_TO_MULTI |
 
 ### Web UI Notes
-- Multicast IP shows "244" for first octet - $\color{red}{\textsf{display bug}}$; actual traffic uses 224
+- Multicast IP shows "244" for first octet - :red_circle: **display bug**; actual traffic uses 224
 - Port field shows base port (6999); audio streams on base+2 (7001)
 - Factory reset via web key `888888` resets most settings
 - Physical reset button does NOT fully factory reset
@@ -416,23 +416,23 @@ arecord -f S16_LE -c 2 -r 48000 | python3 send_audio_tcp.py
 
 ## Known Issues & Workarounds
 
-### $\color{red}{\textsf{Broken Ethernet Auto-Negotiation}}$
+### :red_circle: **Broken Ethernet Auto-Negotiation**
 Both TX and RX units fail to auto-negotiate with standard equipment. Must force 100Mbps
 Full Duplex via `ethtool` or managed switch. The two devices DO link to each other via
 direct cable (same broken autoneg = compatible).
 
-### $\color{red}{\textsf{Managed Switches Cause Artifacts}}$
+### :red_circle: **Managed Switches Cause Artifacts**
 Even with correct speed/duplex settings, managed switches can introduce audio stuttering.
 A Linux bridge (two ports, both forced 100FDX) works reliably. The cause is likely
 multicast handling or store-and-forward latency in the switch.
 
-### $\color{red}{\textsf{Linux Bridge Multicast Socket Issue}}$
+### :red_circle: **Linux Bridge Multicast Socket Issue**
 Standard UDP multicast sockets (`IP_ADD_MEMBERSHIP`) may not receive packets on Linux bridges,
 even with `multicast_snooping=0`. Packets are visible in tcpdump (raw sockets) but not delivered
 to regular sockets. The `receive_audio.py` script uses raw sockets (`AF_PACKET`) to work around
 this reliably. Requires root.
 
-### $\color{red}{\textsf{TX: 50\% Duty Cycle in Default Mode (SOLVED)}}$
+### :red_circle: **TX: 50% Duty Cycle in Default Mode (SOLVED)**
 The default `ONE_TO_MULTI` mode causes 50% duty cycle (22 frames/s with ~125ms gaps).
 **Fix: Set `MULTI_TO_MULTI` via web UI → full continuous 48kHz (47 frames/s), no RX needed.**
 
@@ -442,10 +442,10 @@ Web UI (http://<TX_IP>:9999/) → Transmit Mode → MULTI_TO_MULTI → Commit �
 
 | Mode | Packet Rate | Result |
 |------|-------------|--------|
-| ONE_TO_MULTI (default) | 66 pkt/s (50%) | $\color{red}{\textsf{Gaps, stuttering, unusable}}$ |
+| ONE_TO_MULTI (default) | 66 pkt/s (50%) | :red_circle: **Gaps, stuttering, unusable** |
 | **MULTI_TO_MULTI** | **141 pkt/s (100%)** | **Full continuous 48kHz** |
 
-### $\color{red}{\textsf{Hardware RX Clicking (Software Receiver is Better)}}$
+### :red_circle: **Hardware RX Clicking (Software Receiver is Better)**
 The RX unit's firmware plays metadata bytes (4096-4116) as audio, causing occasional clicks
 even on a clean direct-cable connection. This is a firmware bug. Our software receiver
 correctly strips the metadata and produces cleaner audio.
