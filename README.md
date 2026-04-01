@@ -2,7 +2,7 @@
 
 > [!CAUTION]
 > ## <img src="https://img.shields.io/badge/!!-DON'T_BUY_IF_YOU_DIDN'T_ALREADY_HAVE-red?style=for-the-badge&labelColor=red&color=red&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJ3aGl0ZSI+PHBhdGggZD0iTTEyIDJMMS43NSAyMS41aDIwLjVMMTIgMnptMCAxNC41Yy0uNTUgMC0xLS40NS0xLTFzLjQ1LTEgMS0xIDEgLjQ1IDEgMS0uNDUgMS0xIDF6bTEtM2gtMlY5aDJ2NC41eiIvPjwvc3ZnPg==" alt="Warning">
-> **Broken auto-negotiation, proprietary undocumented protocol, 50% audio duty cycle in default mode, metadata bugs causing clicks, needs Linux bridge with forced 100Mbps - this device requires extensive reverse engineering just to function. Everything documented here took a full day of analysis.**
+> **It does not even work as intended - neither as back-to-back solution nor as multipoint solution as shown in the [manual](M-A202_Manual_Scanned.pdf). Broken auto-negotiation (won't link to any standard switch), proprietary undocumented protocol, 50% audio duty cycle in default mode, firmware metadata bug causing clicks on the hardware RX, built-in rogue DHCP server, needs Linux bridge with forced 100Mbps. The manual claims "24bit/96KHz", "plug-and-play", "no configuration required" - none of this is true. Everything documented here took a full day of reverse engineering just to get basic audio working.**
 
 ![M-A202 TX and RX Units](images/M-A202_TX_RX_units.png)
 *M-A202 TX (bottom) and RX (top) units - "Stereo Hi-Fi Audio Extender" with RCA audio and Ethernet*
@@ -129,6 +129,24 @@ Despite identical hardware and web UI, the devices behave differently:
 **For Linux audio input: use only the RX-labeled device.** It sends clean full-rate
 48kHz stereo PCM over TCP to `<subnet>.93:7005`, works completely standalone,
 no second device needed. Just assign `.93` on your subnet to your server.
+
+## Manual Claims vs Reality
+
+See the scanned [original manual (PDF)](M-A202_Manual_Scanned.pdf).
+
+| Manual Claim | Reality |
+|-------------|---------|
+| "24bit / 96KHz digital" | :red_circle: **16-bit / 48KHz** (measured from actual packets) |
+| "plug-and-play" | :red_circle: **Requires forced 100Mbps FDX** (broken auto-negotiation) |
+| "no configuration required" | :red_circle: **Must set MULTI_TO_MULTI mode** or get 50% audio |
+| "No noise; No current sound" | :red_circle: **Firmware metadata bug causes clicks** on hardware RX |
+| "supports switch" | :red_circle: **Managed switches cause artifacts**, Linux bridge needed |
+| "one-to-many distributed audio" | :red_circle: **ONE_TO_MULTI mode is broken** (50% duty cycle) |
+| "Ultra-low bit rate with no delay (2ms)" | Uncompressed PCM at 1.5 Mbps, latency untested |
+| "32KHz-96KHz sampling" | :red_circle: **Only 48KHz observed** in protocol |
+| "200meters max distance" | Not tested |
+| "signal-to-noise ratio: 102dB" | :red_circle: **Unlikely given 16-bit = 96dB theoretical max** |
+| "Built-in professional audio codec chip" | It's a repurposed HDMI extender chipset (LKDCAA) |
 
 ## The Surprise: It's an HDMI Extender Inside
 
