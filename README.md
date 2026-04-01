@@ -518,6 +518,9 @@ Chinese HDMI-over-IP platform found in many budget extenders under different bra
   create an HTTP MP3 stream, then use pychromecast to cast to all Chromecast Audio devices.
   Alternative: create a speaker group in Google Home app and cast to the group.
 - **MULTI_TO_MULTI mode is the fix for 50% duty cycle** - Enables full-rate continuous 48kHz on the TX even without the RX device. Set via web UI.
+- **Rust receiver+encoder** - Replace Python receiver + ffmpeg (62MB per stream) with a single
+  Rust binary (~3MB) that does raw socket capture + MP3 encoding (via `mp3lame-encoder` crate).
+  Would cut memory from ~770MB to under 100MB, enabling all 4 streams on 1GB ARM devices.
 - **ALSA virtual sound card** - `snd-aloop` + scripts = transparent virtual device
 - **PulseAudio/PipeWire module** - Network audio source/sink
 - **Audio processing** - Insert sox/ffmpeg effects in the pipeline
