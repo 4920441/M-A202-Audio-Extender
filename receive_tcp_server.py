@@ -3,7 +3,7 @@
 TCP server that accepts audio from M-A202 RX device on port 7005.
 
 The RX sends raw 48kHz stereo 16-bit PCM over TCP. No headers.
-This script listens, accepts the connection, and outputs raw PCM to stdout.
+Auto-reconnects when the RX device drops and reconnects.
 
 Usage:
   python3 receive_tcp_server.py | play -t raw -r 48000 -e signed -b 16 -c 2 -
@@ -21,11 +21,11 @@ import threading
 import time
 
 
-def ack_sender(conn):
+def ack_sender(conn, stop_event):
     """Send 6-byte ACKs periodically like the TX does."""
     ack = b'\x00\x00\x00\x00\x00\x00'
     try:
-        while True:
+        while not stop_event.is_set():
             time.sleep(0.5)
             conn.sendall(ack)
     except:
@@ -50,30 +50,28 @@ def main():
 
     print("Listening on %s:%d..." % (args.bind, args.port), file=stderr)
 
-    conn, addr = srv.accept()
-    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    print("Connected from %s:%d - streaming audio" % addr, file=stderr)
+    while True:
+        conn, addr = srv.accept()
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        print("Connected from %s:%d" % addr, file=stderr)
 
-    # Send ACKs in background thread so they don't interfere with reading
-    ack_thread = threading.Thread(target=ack_sender, args=(conn,), daemon=True)
-    ack_thread.start()
+        stop_event = threading.Event()
+        ack_thread = threading.Thread(target=ack_sender, args=(conn, stop_event), daemon=True)
+        ack_thread.start()
 
-    byte_count = 0
+        try:
+            while True:
+                data = conn.recv(65536)
+                if not data:
+                    break
+                os.write(out_fd, data)
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            pass
+        finally:
+            stop_event.set()
+            conn.close()
 
-    try:
-        while True:
-            data = conn.recv(65536)
-            if not data:
-                break
-            os.write(out_fd, data)
-            byte_count += len(data)
-    except KeyboardInterrupt:
-        print("\nStopped. (%d bytes)" % byte_count, file=stderr)
-    except BrokenPipeError:
-        pass
-    finally:
-        conn.close()
-        srv.close()
+        print("Disconnected. Waiting for reconnect..." , file=stderr)
 
 
 if __name__ == '__main__':
