@@ -55,41 +55,58 @@ A Linux host on a third port can sniff the traffic.
 **Option C: Managed switch** - Force per-port speed to 100M Full. Note: some managed switches
 still cause audio artifacts; the Linux bridge approach is more reliable.
 
-### 2. Receive Audio
+### 2. Receive Audio - TX Device (MULTI_TO_MULTI mode, UDP multicast)
 
 ```bash
-# Play directly (sox - recommended):
-python3 receive_audio.py | play -t raw -r 48000 -e signed -b 16 -c 2 -
+# Live playback via SSH (tested overnight - stable):
+ssh root@bridge-host "python3 /root/receive_audio.py" 2>/dev/null | \
+  play -t raw -r 48000 -e signed -b 16 -c 2 -
 
 # Record to WAV:
-python3 receive_audio.py | sox -t raw -r 48000 -e signed -b 16 -c 2 - output.wav
+ssh root@bridge-host "python3 /root/receive_audio.py" 2>/dev/null | \
+  sox -t raw -r 48000 -e signed -b 16 -c 2 - output.wav
 
 # Record to FLAC:
-python3 receive_audio.py | ffmpeg -f s16le -ar 48000 -ac 2 -i - output.flac
-
-# Play with VLC:
-python3 receive_audio.py | cvlc --demux=rawaud --rawaud-channels=2 \
-     --rawaud-samplerate=48000 --rawaud-fourcc=s16l -
-
-# Via SSH from remote bridge host:
-ssh root@bridge-host "python3 /root/receive_audio.py" | play -t raw -r 48000 -e signed -b 16 -c 2 -
+ssh root@bridge-host "python3 /root/receive_audio.py" 2>/dev/null | \
+  ffmpeg -f s16le -ar 48000 -ac 2 -i - output.flac
 
 # Show stream info:
-python3 receive_audio.py --info
+ssh root@bridge-host "python3 /root/receive_audio.py --info"
 ```
 
-### 3. Send Audio (to RX device)
+### 3. Receive Audio - RX Device (ONE_TO_MULTI mode, TCP to .93)
 
 ```bash
-# Send any audio file:
+# Live playback via SSH:
+ssh root@bridge-host "python3 /root/receive_tcp_server.py --bind <subnet>.93" 2>/dev/null | \
+  play -t raw -r 48000 -e signed -b 16 -c 2 -
+
+# Record to WAV:
+ssh root@bridge-host "python3 /root/receive_tcp_server.py --bind <subnet>.93" 2>/dev/null | \
+  sox -t raw -r 48000 -e signed -b 16 -c 2 - output.wav
+```
+
+### 4. Send Audio (to device RCA outputs)
+
+```bash
+# Send any audio file via UDP multicast (mimics TX):
 ffmpeg -i music.mp3 -f s16le -ar 48000 -ac 2 - | python3 send_audio.py
+
+# Send via TCP (mimics RX, plays on TX device outputs):
+ffmpeg -i music.mp3 -f s16le -ar 48000 -ac 2 - | python3 send_audio_tcp.py
 
 # Send from microphone:
 arecord -f S16_LE -c 2 -r 48000 | python3 send_audio.py
-
-# Send from PulseAudio/PipeWire:
-parec --format=s16le --channels=2 --rate=48000 | python3 send_audio.py
 ```
+
+### Standalone Device Summary
+
+Each device works independently as a network audio input:
+
+| Device | Mode | Receive Method | Live Play Command |
+|--------|------|---------------|-------------------|
+| **TX** | MULTI_TO_MULTI | `receive_audio.py` (UDP multicast) | `ssh root@host "python3 receive_audio.py" 2>/dev/null \| play -t raw -r 48000 -e signed -b 16 -c 2 -` |
+| **RX** | ONE_TO_MULTI | `receive_tcp_server.py` (TCP on .93) | `ssh root@host "python3 receive_tcp_server.py --bind x.x.x.93" 2>/dev/null \| play -t raw -r 48000 -e signed -b 16 -c 2 -` |
 
 ## Device Identification
 
@@ -121,14 +138,15 @@ Despite identical hardware and web UI, the devices behave differently:
 
 | | TX-labeled | RX-labeled |
 |--|-----------|-----------|
-| UDP multicast (224.0.0.100:7001) | Yes | Yes |
+| UDP multicast (224.0.0.100:7001) | Yes | Yes (ONE_TO_MULTI only) |
 | TCP audio to `<subnet>.93:7005` | **No** | **Yes** |
 | Built-in DHCP server | Yes | No |
-| Works standalone for Linux audio | Multicast only (50% duty cycle without RX) | **Multicast + TCP (full rate, clean)** |
+| Best standalone mode | **MULTI_TO_MULTI** (full rate multicast) | **ONE_TO_MULTI** (full rate TCP) |
+| Receive script | `receive_audio.py` (raw socket) | `receive_tcp_server.py --bind x.x.x.93` |
 
-**For Linux audio input: use only the RX-labeled device.** It sends clean full-rate
-48kHz stereo PCM over TCP to `<subnet>.93:7005`, works completely standalone,
-no second device needed. Just assign `.93` on your subnet to your server.
+**Both devices work standalone as network audio inputs.** Use TX with MULTI_TO_MULTI
+for multicast, or RX with ONE_TO_MULTI for clean TCP. Two independent audio inputs
+from one $100 pair.
 
 ## Manual Claims vs Reality
 
