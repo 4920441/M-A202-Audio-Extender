@@ -1,5 +1,9 @@
 # M-A202 Bi-Directional Stereo Hi-Fi Audio Extender - Reverse Engineering & Linux Tools
 
+> [!CAUTION]
+> ## <img src="https://img.shields.io/badge/!!-DON'T_BUY_IF_YOU_DIDN'T_ALREADY_HAVE-red?style=for-the-badge&labelColor=red&color=red&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJ3aGl0ZSI+PHBhdGggZD0iTTEyIDJMMS43NSAyMS41aDIwLjVMMTIgMnptMCAxNC41Yy0uNTUgMC0xLS40NS0xLTFzLjQ1LTEgMS0xIDEgLjQ1IDEgMS0uNDUgMS0xIDF6bTEtM2gtMlY5aDJ2NC41eiIvPjwvc3ZnPg==" alt="Warning">
+> **Broken auto-negotiation, proprietary undocumented protocol, 50% audio duty cycle in default mode, metadata bugs causing clicks, needs Linux bridge with forced 100Mbps - this device requires extensive reverse engineering just to function. Everything documented here took a full day of analysis.**
+
 ![M-A202 TX and RX Units](images/M-A202_TX_RX_units.png)
 *M-A202 TX (bottom) and RX (top) units - "Stereo Hi-Fi Audio Extender" with RCA audio and Ethernet*
 
