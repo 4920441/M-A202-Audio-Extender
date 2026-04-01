@@ -556,15 +556,44 @@ python3 receive_tcp_server.py --bind <subnet>.93 2>/dev/null | \
   icecast://source:hackme@localhost:8000/rx -loglevel warning &
 ```
 
+### All Streams
+
+```bash
+# TX MP3 → Icecast /tx
+python3 receive_audio.py 2>/dev/null | \
+  ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 \
+  -c:a libmp3lame -b:a 320k -f mp3 -content_type audio/mpeg \
+  icecast://source:hackme@localhost:8000/tx &
+
+# TX FLAC (lossless, lower latency) → Icecast /tx-flac
+python3 receive_audio.py 2>/dev/null | \
+  ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 \
+  -c:a flac -f ogg -content_type application/ogg \
+  icecast://source:hackme@localhost:8000/tx-flac &
+
+# RX MP3 → Icecast /rx
+python3 receive_tcp_server.py --bind <subnet>.93 2>/dev/null | \
+  ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 \
+  -c:a libmp3lame -b:a 320k -f mp3 -content_type audio/mpeg \
+  icecast://source:hackme@localhost:8000/rx &
+```
+
 ### Listen
 
 ```
-http://<server>:8000/tx   ← TX device audio (MP3 stream)
-http://<server>:8000/rx   ← RX device audio (MP3 stream)
-http://<server>:8000/     ← Icecast status page
+http://<server>:8000/tx        ← TX audio, MP3 (browser/Chromecast)
+http://<server>:8000/tx-flac   ← TX audio, lossless FLAC (low latency, pro use)
+http://<server>:8000/rx        ← RX audio, MP3 (browser/Chromecast)
+http://<server>:8000/          ← Icecast status page
 ```
 
 Works in any browser, VLC, ffplay, mpv, or Chromecast. Multiple simultaneous listeners supported.
+
+> [!NOTE]
+> **RX FLAC (/rx-flac) is not stable** - the RX uses a single TCP connection held by the MP3
+> encoder. A second receiver (raw socket sniffer) for FLAC causes glitches due to TCP segment
+> reassembly issues. Fix: use `tee` to split the single TCP stream into both encoders.
+> This is planned for the Proxmox production setup.
 
 > [!NOTE]
 > Don't use ffmpeg's built-in `-listen 1` HTTP server - it only supports one client
