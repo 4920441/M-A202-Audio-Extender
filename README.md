@@ -666,3 +666,7 @@ These reverse engineering notes and scripts are provided for educational and int
 | OS | Debian/Armbian (arm64) |
 | Network | Linux bridge (end0 + enxc0742bffa60d), USB adapter uplink |
 | Analysis Date | 2026-03-31 |
+
+
+Ali-Page:  https://de.aliexpress.com/item/1005009575613695.html   // the seller still thinks its the perfect product... yeah... right....
+
