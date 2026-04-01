@@ -603,10 +603,32 @@ Works in any browser, VLC, ffplay, mpv, or Chromecast. Multiple simultaneous lis
 > due to TCP segment reassembly issues.
 
 > [!WARNING]
-> **/rx-flac is unstable on low-power ARM devices** (Orange Pi, Raspberry Pi).
-> The TCP receive + tee + FLAC encoding + Icecast creates too much backpressure after ~3 minutes.
-> The TX FLAC stream (/tx-flac) works because raw socket multicast is more efficient.
-> RX FLAC will work on Proxmox/x86 where CPU is not a constraint.
+> **FLAC streams are unstable on low-power ARM devices** (Orange Pi, Raspberry Pi, 1GB RAM).
+> Two MP3 streams + Icecast + Python receivers use ~770MB. Adding FLAC causes swapping
+> and glitches. FLAC streams are commented out in the service script - uncomment on Proxmox/x86.
+
+### systemd Service (reboot-proof)
+
+The included [`m-a202-audio.sh`](m-a202-audio.sh) script + systemd service handles everything:
+- Forces 100FDX on bridge ports
+- Sets up bridge IPs and ebtables DHCP filter
+- Starts Icecast if not running
+- Launches all audio streams
+- Auto-restarts on crash
+
+```bash
+# Install:
+cp m-a202-audio.sh /root/
+cp m-a202-audio.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable m-a202-audio
+systemctl start m-a202-audio
+
+# Manage:
+systemctl status m-a202-audio
+systemctl restart m-a202-audio
+journalctl -u m-a202-audio -f
+```
 
 > [!NOTE]
 > Don't use ffmpeg's built-in `-listen 1` HTTP server - it only supports one client

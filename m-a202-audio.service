@@ -1,0 +1,15 @@
+[Unit]
+Description=M-A202 Audio Streaming (Icecast)
+After=network.target icecast2.service
+Wants=icecast2.service
+
+[Service]
+Type=simple
+ExecStart=/root/m-a202-audio.sh
+Restart=always
+RestartSec=5
+KillMode=process
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
